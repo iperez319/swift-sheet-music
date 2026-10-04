@@ -117,6 +117,27 @@ struct GraceImportTests {
         #expect(Self.chords(voices[1]).map { $0.notes.map(\.pitch) } == [[72]])
     }
 
+    /// Voice 2 enters on beat 4 with a grace before its note: the gap goes before the note that takes time, which
+    /// carries the grace.
+    @Test("a late voice that opens with a grace keeps its gap")
+    func aLateVoiceOpeningWithAGrace() throws {
+        let score = try Self.score(
+            Self.note("C", 5, 8, "whole"),
+            extra: "<backup><duration>8</duration></backup><forward><duration>6</duration></forward>"
+                + Self.grace("F", 4, voice: 2) + Self.note("E", 4, 2, "quarter", voice: 2),
+        )
+        let voice = try #require(Self.voices(score).last)
+        guard voice.elements.count == 2, case let .locationShift(delta) = voice.elements[0],
+              case let .chord(main) = voice.elements[1]
+        else {
+            Issue.record("expected a location shift then one chord, got \(Array(voice.elements))")
+            return
+        }
+        #expect(delta == Fraction(numerator: 3, denominator: 4))
+        #expect(main.notes.map(\.pitch) == [64])
+        #expect(main.graceNotesBefore.map { $0.notes.map(\.pitch) } == [[65]])
+    }
+
     @Test("every grace note gets an identity")
     func gracesAreIdentified() throws {
         let score = try Self.score(Self.grace("E", 5) + Self.note("D", 5, 8, "whole"))
