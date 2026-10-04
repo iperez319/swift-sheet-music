@@ -205,6 +205,10 @@ extension LayoutEngine {
 
         var remainingSynthClef = synthesizeLeadingClef
         var remainingSynthKeySig = synthesizeLeadingKeySig
+        // A clef change partway through the bar is moved in front of its column once every voice has placed its
+        // chords there, since a later voice may draw an accidental further left (`LayoutEngine+ClefChange.swift`).
+        var clefChanges: [ClefChangeSlot] = []
+        var clefChangeInkLeft: [Int: CGFloat] = [:]
         for (voiceIdx, voice) in measure.voices.enumerated() {
             var tickCursor = 0
             var inHeader = true
@@ -502,6 +506,13 @@ extension LayoutEngine {
                         ),
                         anchor: .explicit(veID),
                     )
+                    if !inHeader {
+                        clefChanges.append(ClefChangeSlot(
+                            tick: tickCursor,
+                            index: clef.visible ? out.endIndex : invisibleOut.endIndex,
+                            isVisible: clef.visible,
+                        ))
+                    }
                     if clef.visible {
                         out.append(element)
                     } else {
@@ -591,6 +602,9 @@ extension LayoutEngine {
                     }
                 case let .chord(r) where r.notes.isEmpty:
                     inHeader = false
+                    clefChangeInkLeft[tickCursor] = max(
+                        clefChangeInkLeft[tickCursor] ?? 0, inkLeft(of: r, metrics: metrics),
+                    )
                     let (restBase, _) = DurationInterpretation.split(
                         r.duration,
                     )
@@ -701,6 +715,9 @@ extension LayoutEngine {
                     tickCursor += r.duration.resolved(in: measureDuration).ticks(division: division)
                 case let .chord(chord):
                     inHeader = false
+                    clefChangeInkLeft[tickCursor] = max(
+                        clefChangeInkLeft[tickCursor] ?? 0, inkLeft(of: chord, metrics: metrics),
+                    )
                     // Every element at a shared tick lives at the same
                     // x. Flag glyphs extend ~1 sp to the right of the
                     // stem, but that's a visual-only concern — shifting
@@ -1923,6 +1940,10 @@ extension LayoutEngine {
                 )
             }
         }
+        placeClefChanges(
+            clefChanges, inkLeftByTick: clefChangeInkLeft, tickColumns: tickColumns, metrics: metrics,
+            out: &out, invisibleOut: &invisibleOut,
+        )
 
         // Trailing bar line if no voice emitted one.
         // The final measure of the score gets a "end" barline

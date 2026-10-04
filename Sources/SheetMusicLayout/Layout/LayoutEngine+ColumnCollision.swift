@@ -129,6 +129,16 @@ extension LayoutEngine {
         return weights.indices.map { atFloor[$0] ? floors[$0] : k * weights[$0] }
     }
 
+    /// A glyph's advance, measured the way the renderers measure it (`AccidentalPlacement.leftEdgeX` takes the
+    /// accidental's advance; a rest is centered on its column).
+    static func bravuraAdvance(_ codepoint: UInt32, metrics: StaffMetrics) -> CGFloat {
+        guard let scalar = UnicodeScalar(codepoint) else { return 0 }
+        return FontMetrics.provider.typographicWidth(
+            text: String(Character(scalar)),
+            font: LayoutFont(face: SMuFLFamily.bravura, pointSize: metrics.glyphFontSize),
+        )
+    }
+
     // MARK: - Private
 
     private static let trebleClef = NotatedClef(rawType: "G")
@@ -147,15 +157,5 @@ extension LayoutEngine {
             PitchStaffPosition.step(midiPitch: $0.pitch, tpc: $0.tpc, clef: trebleClef).step
         }.sorted()
         return zip(steps, steps.dropFirst()).contains { $1 - $0 < 2 }
-    }
-
-    /// A glyph's advance, measured the way the renderers measure it (`AccidentalPlacement.leftEdgeX` takes the
-    /// accidental's advance; a rest is centered on its column).
-    private static func bravuraAdvance(_ codepoint: UInt32, metrics: StaffMetrics) -> CGFloat {
-        guard let scalar = UnicodeScalar(codepoint) else { return 0 }
-        return FontMetrics.provider.typographicWidth(
-            text: String(Character(scalar)),
-            font: LayoutFont(face: SMuFLFamily.bravura, pointSize: metrics.glyphFontSize),
-        )
     }
 }

@@ -645,6 +645,11 @@ extension LayoutEngine {
         for staff in staves where measureIdx < staff.measures.count {
             var staffInks: [Int: ColumnInk] = [:]
             defer { inks.append(staffInks) }
+            // A clef change partway through the bar widens the left reach of the column it stands in front of
+            // (`LayoutEngine+ClefChange.swift`): tick → the clef's own reach, and → how far that column's ink
+            // reaches left of it in any voice.
+            var clefChangeReach: [Int: CGFloat] = [:]
+            var inkLeftByTick: [Int: CGFloat] = [:]
             for voice in staff.measures[measureIdx].voices {
                 var elements: [TimedElement] = []
                 var tick = 0
@@ -714,6 +719,7 @@ extension LayoutEngine {
                         staffInks[tick, default: ColumnInk()].formUnion(
                             columnInk(of: c, metrics: metrics),
                         )
+                        inkLeftByTick[tick] = max(inkLeftByTick[tick] ?? 0, inkLeft(of: c, metrics: metrics))
                         previousChord = c
                         allTicks.insert(tick)
                         tick = end
@@ -731,6 +737,7 @@ extension LayoutEngine {
                         staffInks[tick, default: ColumnInk()].formUnion(
                             columnInk(of: r, metrics: metrics),
                         )
+                        inkLeftByTick[tick] = max(inkLeftByTick[tick] ?? 0, inkLeft(of: r, metrics: metrics))
                         allTicks.insert(tick)
                         tick = end
                     case let .harmony(harmony) where harmony.visible:
@@ -788,6 +795,11 @@ extension LayoutEngine {
                         // falls back to the header X and stacks the
                         // whole voice at the measure's left edge.
                         tick += delta.ticks(division: division)
+                    case let .clef(clef) where clef.visible && !elements.isEmpty:
+                        // After the voice's first chord or rest, so not in the bar's header.
+                        clefChangeReach[tick] = max(clefChangeReach[tick] ?? 0, LayoutEngine.clefChangeReach(
+                            clef, metrics: metrics,
+                        ))
                     default:
                         break
                     }
@@ -796,6 +808,11 @@ extension LayoutEngine {
                     voiceElements.append(elements)
                     measureEnd = max(measureEnd, tick)
                 }
+            }
+            for (tick, reach) in clefChangeReach {
+                // No column at the tick: the clef ends the bar, and there is nothing for it to stand in front of.
+                guard let inkLeft = inkLeftByTick[tick] else { continue }
+                staffInks[tick, default: ColumnInk()].left = inkLeft + reach
             }
         }
 
