@@ -151,6 +151,7 @@ enum MusicXMLMeasureWalker {
         var perStaff: [StaffMeasureBuilder] = (0 ..< staffCount).map { _ in
             StaffMeasureBuilder()
         }
+        var timeline = MusicXMLVoiceTimeline()
 
         for child in measureNode.children {
             switch child.name {
@@ -183,6 +184,18 @@ enum MusicXMLMeasureWalker {
                     existingVoiceElements: existing,
                     drumTable: drumTable,
                 )
+                // A chord member shares its chord's onset, and a grace note
+                // takes no time; any other note starts at the running time,
+                // and a voice that was silent until then is shifted there.
+                if child.first("chord") == nil, child.first("grace") == nil,
+                   let gap = timeline.place(
+                       noteLasting: divisions.fractionOfWhole(durationTicks(child)),
+                       staffIndex: staffIdx,
+                       voice: voice,
+                   )
+                {
+                    perStaff[staffIdx].append(.locationShift(delta: gap), toVoice: voice)
+                }
                 switch decoded {
                 case let .foldIntoLastChord(note, duration, trailingBreaths):
                     perStaff[staffIdx].foldIntoLastChord(
@@ -240,12 +253,11 @@ enum MusicXMLMeasureWalker {
                     }
                 }
 
-            case "backup", "forward":
-                // For Phase 0 we rely on document order + <voice>/<staff> tags
-                // rather than tick arithmetic. MuseScore's pass2 maintains a
-                // per-voice cursor for more complex layouts — deferred until
-                // a fixture requires it.
-                continue
+            case "backup":
+                timeline.move(by: divisions.fractionOfWhole(-durationTicks(child)))
+
+            case "forward":
+                timeline.move(by: divisions.fractionOfWhole(durationTicks(child)))
 
             case "barline":
                 let decoded = MusicXMLBarlineDecoder.decode(child)
@@ -260,6 +272,12 @@ enum MusicXMLMeasureWalker {
         }
 
         return perStaff.map { $0.build() }
+    }
+
+    /// The `<duration>` of a `<note>`, `<backup>` or `<forward>`, in divisions; `0` when absent or unreadable, as on
+    /// a grace note.
+    private static func durationTicks(_ node: XMLTreeNode) -> Int {
+        node.first("duration").flatMap { Int($0.text) } ?? 0
     }
 
     /// Read `<note><staff>N</staff>` and convert to a 0-based staff index.
