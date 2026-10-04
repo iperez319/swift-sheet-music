@@ -183,6 +183,17 @@ enum MusicXMLMeasureWalker {
                     existingVoiceElements: existing,
                     drumTable: drumTable,
                 )
+                // A grace note takes no time: it waits for the chord it
+                // ornaments instead of taking a slot in the voice.
+                if let grace = child.first("grace") {
+                    perStaff[staffIdx].appendGrace(
+                        decoded,
+                        slash: grace.attributes["slash"] == "yes",
+                        writtenType: child.first("type")?.text ?? "",
+                        toVoice: voice,
+                    )
+                    continue
+                }
                 switch decoded {
                 case let .foldIntoLastChord(note, duration, trailingBreaths):
                     perStaff[staffIdx].foldIntoLastChord(

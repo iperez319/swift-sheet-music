@@ -24,6 +24,8 @@ struct StaffMeasureBuilder {
     /// `originalStaff` is left nil here and stamped by the caller
     /// once the staff address is known.
     private var systemElements: [PositionedSystemElement] = []
+    /// Grace chords not yet hung on a chord, by voice index (`MusicXMLGraceDecoder`).
+    private var pendingGraces: [Int: [MusicXMLGraceDecoder.Pending]] = [:]
 
     /// Result of `build()`: the decoded `Measure` and the system
     /// elements that should be merged into the score-level
@@ -64,10 +66,52 @@ struct StaffMeasureBuilder {
     }
 
     /// Append a note-sourced element under the MSCX index corresponding to
-    /// this MusicXML voice id.
+    /// this MusicXML voice id. The first chord with notes takes the voice's
+    /// waiting grace chords as its before-graces.
     mutating func append(_ element: VoiceElement, toVoice voiceId: String) {
         let idx = internVoice(voiceId)
+        if case var .chord(chord) = element, !chord.notes.isEmpty,
+           let graces = pendingGraces.removeValue(forKey: idx)
+        {
+            chord.graceNotesBefore = IdentifiedArray(graces.map { $0.graceChord(after: false) })
+            voices[idx].append(.chord(chord))
+            return
+        }
         voices[idx].append(element)
+    }
+
+    /// Hold a grace note for the voice's next chord with notes. A grace note
+    /// still opens its voice, so voices keep their order of first appearance.
+    /// A `<chord/>` grace joins the grace chord before it.
+    mutating func appendGrace(
+        _ decoded: MusicXMLNoteDecoder.Decoded,
+        slash: Bool,
+        writtenType: String,
+        toVoice voiceId: String,
+    ) {
+        let idx = internVoice(voiceId)
+        switch decoded {
+        case let .foldIntoLastChord(note, duration, trailingBreaths):
+            if var last = pendingGraces[idx]?.popLast() {
+                last.chord.notes = ChordNotes(Array(last.chord.notes) + [note])
+                pendingGraces[idx, default: []].append(last)
+            } else {
+                pendingGraces[idx, default: []].append(MusicXMLGraceDecoder.Pending(
+                    chord: Chord(duration: duration, notes: [note]), slash: slash, writtenType: writtenType,
+                ))
+            }
+            voices[idx].append(contentsOf: trailingBreaths.map(VoiceElement.breath))
+        case let .new(elements):
+            for element in elements {
+                if case let .chord(chord) = element, !chord.notes.isEmpty {
+                    pendingGraces[idx, default: []].append(MusicXMLGraceDecoder.Pending(
+                        chord: chord, slash: slash, writtenType: writtenType,
+                    ))
+                } else {
+                    voices[idx].append(element)
+                }
+            }
+        }
     }
 
     func elements(forVoice voiceId: String) -> [VoiceElement] {
@@ -115,6 +159,20 @@ struct StaffMeasureBuilder {
 
     func build() -> Built {
         var final = voices
+        // Graces with no chord after them in the bar ornament the chord before
+        // them. With no chord there either, they stay ordinary chords.
+        for (idx, graces) in pendingGraces.sorted(by: { $0.key < $1.key }) {
+            if let host = final[idx].lastIndex(where: {
+                if case let .chord(chord) = $0 { !chord.notes.isEmpty } else { false }
+            }), case var .chord(chord) = final[idx][host] {
+                chord.graceNotesAfter = IdentifiedArray(
+                    Array(chord.graceNotesAfter) + graces.map { $0.graceChord(after: true) },
+                )
+                final[idx][host] = .chord(chord)
+            } else {
+                final[idx].append(contentsOf: graces.map { .chord($0.chord) })
+            }
+        }
         if let trailing = trailingBarline {
             if final.isEmpty {
                 final.append([])
